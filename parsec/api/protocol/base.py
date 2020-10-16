@@ -14,7 +14,7 @@ from parsec.serde import (
 
 from parsec.serde.schema import OneOfSchemaLegacy
 
-from typing import Dict, Type, cast
+from typing import Dict, Type, cast, TypeVar, Union
 
 
 __all__ = ("ProtocolError", "BaseReqSchema", "BaseRepSchema", "CmdSerializer")
@@ -44,11 +44,14 @@ def serializer_factory(schema_cls: Type[BaseSchema]) -> MsgpackSerializer:
     return MsgpackSerializer(schema_cls, InvalidMessageError, MessageSerializationError)
 
 
+T = TypeVar("T")
+
+
 class BaseReqSchema(BaseSchema):
     cmd = fields.String(required=True)
 
     @post_load
-    def _drop_cmd_field(self, item: Dict[str, object]) -> Dict[str, object]:
+    def _drop_cmd_field(self, item: Dict[str, T]) -> Dict[str, T]:  # type: ignore[misc]
         if self.drop_cmd_field:
             item.pop("cmd")
         return item
@@ -59,7 +62,9 @@ class BaseReqSchema(BaseSchema):
 
 
 class BaseRepSchema(BaseSchema):
-    status = fields.CheckedConstant("ok", required=True)
+    status: Union[fields.String, fields.CheckedConstant] = fields.CheckedConstant(
+        "ok", required=True
+    )
 
 
 class ErrorRepSchema(BaseRepSchema):

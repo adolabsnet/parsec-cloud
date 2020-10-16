@@ -1,6 +1,6 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-from typing import Tuple, Optional, cast, Dict, Sequence
+from typing import Tuple, Optional, cast, Dict, Sequence, Union
 from uuid import UUID
 from enum import Enum
 from secrets import token_bytes
@@ -205,19 +205,16 @@ class ServerHandshake:
     def __init__(self, challenge_size: int = 48):
         # Challenge
         self.challenge_size = challenge_size
-        self.challenge = None
-        self.answer_type = None
-        self.answer_data = None
+        self.challenge: Optional[bytes] = None
+        self.answer_type: Optional[Union[HandshakeType, APIV1_HandshakeType]] = None
+        self.answer_data: Optional[Dict[str, object]] = None
 
         # API version
-        self.client_api_version = None
-        self.backend_api_version = None
+        self.client_api_version: Optional[ApiVersion] = None
+        self.backend_api_version: Optional[ApiVersion] = None
 
         # State
         self.state = "stalled"
-
-    def is_anonymous(self) -> bool:
-        return self.device_id is None
 
     def build_challenge_req(self) -> bytes:
         if not self.state == "stalled":
@@ -337,6 +334,7 @@ class ServerHandshake:
                 )
 
             try:
+                assert self.answer_data is not None
                 returned_challenge = verify_key.verify(self.answer_data["answer"])
                 if returned_challenge != self.challenge:
                     raise HandshakeFailedChallenge("Invalid returned challenge")
@@ -349,22 +347,27 @@ class ServerHandshake:
 
 
 class BaseClientHandshake:
-    SUPPORTED_API_VERSIONS = None  # Overwritten by subclasses
+    SUPPORTED_API_VERSIONS: Optional[Sequence[ApiVersion]] = None  # Overwritten by subclasses
 
-    def __init__(self):
-        self.challenge_data = None
-        self.backend_api_version = None
-        self.client_api_version = None
+    def __init__(self) -> None:
+        self.challenge_data: Optional[Dict[str, object]] = None
+        self.backend_api_version: Optional[ApiVersion] = None
+        self.client_api_version: Optional[ApiVersion] = None
 
     def load_challenge_req(self, req: bytes) -> None:
+        assert self.SUPPORTED_API_VERSIONS is not None
         self.challenge_data = handshake_challenge_serializer.loads(req)
+        assert self.challenge_data is not None
+        supported_api_version = cast(
+            Sequence[ApiVersion], self.challenge_data["supported_api_versions"]
+        )
 
         # API version matching
         self.backend_api_version, self.client_api_version = _settle_compatible_versions(
-            self.challenge_data["supported_api_versions"], self.SUPPORTED_API_VERSIONS
+            supported_api_version, self.SUPPORTED_API_VERSIONS
         )
 
-    def process_result_req(self, req: bytes):
+    def process_result_req(self, req: bytes) -> None:
         data = handshake_result_serializer.loads(req)
         if data["result"] != "ok":
             if data["result"] == "bad_identity":
@@ -390,7 +393,7 @@ class BaseClientHandshake:
 
 class AuthenticatedClientHandshake(BaseClientHandshake):
     SUPPORTED_API_VERSIONS = (API_V2_VERSION,)
-    HANDSHAKE_TYPE = HandshakeType.AUTHENTICATED
+    HANDSHAKE_TYPE: Union[HandshakeType, APIV1_HandshakeType] = HandshakeType.AUTHENTICATED
     HANDSHAKE_ANSWER_SERIALIZER = handshake_answer_serializer
 
     def __init__(
@@ -407,6 +410,7 @@ class AuthenticatedClientHandshake(BaseClientHandshake):
 
     def process_challenge_req(self, req: bytes) -> bytes:
         self.load_challenge_req(req)
+        assert self.challenge_data is not None
         answer = self.user_signkey.sign(self.challenge_data["challenge"])
         return self.HANDSHAKE_ANSWER_SERIALIZER.dumps(
             {
